@@ -24,33 +24,6 @@ void delete_head(uint32_t level) {
         free_lists[level] = free_lists[level]->next;
 }
 
-void *alloc(uint32_t size) {
-    uint32_t level;
-    block *blk;
-
-    if (!mm_available) {
-        printf("Not enough space.\n");
-        return NULL;
-    }
-
-    for (level = _level_from_size(size); free_lists[level] == NULL; level--);
-
-    for (; BLOCK_SIZE_AT_LVL(level) > size; level++) {
-        void *buddy1, *buddy2;
-        buddy1 = (void *) free_lists[level];
-        buddy2 = (block *) (buddy1 + BLOCK_SIZE_AT_LVL(level + 1));
-        buddy1 = (block *) buddy1;
-        delete_head(level);
-        insert_head(buddy2, level + 1);
-        insert_head(buddy1, level + 1);
-    }
-
-    blk = free_lists[level];
-    delete_head(level);
-    mm_available -= size;
-    return blk;
-}
-
 void delete_free_block(void *blk, uint32_t level) {
     block *current;
     current = free_lists[level];
@@ -78,6 +51,33 @@ void *free_list_find(void *buddy_addr, uint32_t level) {
         current = current->next;
     }
     return NULL;
+}
+
+void *alloc(uint32_t size) {
+    uint32_t level;
+    block *blk;
+
+    if (!mm_available) {
+        printf("Not enough space.\n");
+        return NULL;
+    }
+
+    for (level = _level_from_size(size); free_lists[level] == NULL; level--);
+
+    for (; BLOCK_SIZE_AT_LVL(level) > size; level++) {
+        void *buddy1, *buddy2;
+        buddy1 = (void *) free_lists[level];
+        buddy2 = (block *) (buddy1 + BLOCK_SIZE_AT_LVL(level + 1));
+        buddy1 = (block *) buddy1;
+        delete_head(level);
+        insert_head(buddy2, level + 1);
+        insert_head(buddy1, level + 1);
+    }
+
+    blk = free_lists[level];
+    delete_head(level);
+    mm_available -= size;
+    return blk;
 }
 
 void free_blk(void *blk, uint32_t size) {
