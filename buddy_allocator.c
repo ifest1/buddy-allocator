@@ -3,25 +3,33 @@
 #include <string.h>
 #include "buddy_allocator.h"
 
-void _init_memory() {
+
+void _init_allocator() {
     block *memory_start = (block *) ((void *) malloc(MAX_BLK_SIZE));
     mm_available = MAX_BLK_SIZE;
     memory_start->size = mm_available;
     free_lists[0] = (block *) memory_start;
+    for (uint32_t level = 0; level < MAX_LVLS; level++) {
+        block_sizes[level] = (MAX_BLK_SIZE / (1 << level));
+    }
 }
+
 
 uint32_t _level_from_size(uint32_t size) {
     uint32_t level;
-    for (level = MAX_LVLS; _block_size_at_level(level) < size; level--);
+    for (level = MAX_LVLS; block_sizes[level] < size; level--);
     return level;
 }
 
+
 void _insert_freelist_head(block *blk, uint32_t level) {
-    uint32_t size = _block_size_at_level(level);
+    uint32_t size = block_sizes[level];
     blk->next = free_lists[level];
     blk->size = size;
+    blk->level = level;
     free_lists[level] = blk;
 }
+
 
 block *_pop_freelist_head(uint32_t level) {
     block *blk;
@@ -29,6 +37,7 @@ block *_pop_freelist_head(uint32_t level) {
     free_lists[level] = free_lists[level]->next;
     return blk;
 }
+
 
 void _delete_freelist_blk(block *blk, uint32_t level) {
     block *current = free_lists[level];
@@ -38,44 +47,42 @@ void _delete_freelist_blk(block *blk, uint32_t level) {
         return;
     }
 
-    current = current->next;
-
-    while (current) {
-        if (current->next == blk)
-            current->next = current->next->next;
+    while (current != NULL && current->next != blk) {
         current = current->next;
     }
+
+    if (current == NULL) {
+        return;
+    }
+
+    current->next = current->next->next;
 }
 
-block *_find_freelist_blk(void *blk, uint32_t level) {
-    block *current;
-    current = free_lists[level];
-    while (current) {
-        if ((void *)current == blk)
-            return current;
+
+block *_find_freelist_blk(block *blk, uint32_t level) {
+    block *current = free_lists[level];
+
+    while (current != NULL && current != blk) {
         current = current->next;
     }
-    return NULL;
+
+    return current;
 }
 
-uint32_t _blocks_at_level(uint32_t level) {
-    return (1 << level);
-}
-
-uint32_t _block_size_at_level(uint32_t level) {
-    return (MAX_BLK_SIZE / _blocks_at_level(level));
-}
 
 void *_get_blk_buddy(block *blk) {
-    block *buddy = ((block *) (((void *) blk) - sizeof(block) - blk->size));
+    block *buddy = ((block *) (((void *) blk) - BLK_STRUCT_SIZE - blk->size));
     uint32_t level = _level_from_size(blk->size);
     buddy = _find_freelist_blk(buddy, level);
+
     if (buddy) {
         return buddy;
     }
-    buddy = ((block *) (((void *) blk) + sizeof(block) + blk->size));
+
+    buddy = ((block *) (((void *) blk) + BLK_STRUCT_SIZE + blk->size));
     return _find_freelist_blk(buddy, level);
 }
+
 
 void *alloc(uint32_t size) {
     uint32_t level;
@@ -90,25 +97,24 @@ void *alloc(uint32_t size) {
 
     for (level = _level_from_size(size); free_lists[level] == NULL; level--);
 
-    for (; _block_size_at_level(level) > size; level++) {
+    for (; block_sizes[level] > size; level++) {
         block *blk = _pop_freelist_head(level);
-        uint32_t next_lvl_size = _block_size_at_level(level + 1);
-        block *buddy = (block *) (((void *) blk) + sizeof(block) + next_lvl_size);
+        uint32_t next_lvl_size = block_sizes[(level + 1)];
+        block *buddy = (block *) (((void *) blk) + BLK_STRUCT_SIZE + next_lvl_size);
+
         _insert_freelist_head(buddy, level + 1);
         _insert_freelist_head(blk, level + 1);
     }
 
-    mm_available -= (size + sizeof(block));
-    block *blk_test = _pop_freelist_head(level);
-    void *chunk = (((void *) blk_test) + sizeof(block));
-    return chunk;
+    mm_available -= (size + BLK_STRUCT_SIZE);
+    return (((void *) _pop_freelist_head(level)) + BLK_STRUCT_SIZE);
 }
 
 void free_blk(void *chunk) {
-    block *blk = (block *) (chunk - sizeof(block));
+    block *blk = (block *) (chunk - BLK_STRUCT_SIZE);
     uint32_t level = _level_from_size(blk->size);
 
-    mm_available += (blk->size + sizeof(block));
+    mm_available += (blk->size + BLK_STRUCT_SIZE);
     printf("%d\n", mm_available);
 
     while (level >= 0) {
@@ -117,23 +123,30 @@ void free_blk(void *chunk) {
             return _insert_freelist_head(blk, level);
         }
         _delete_freelist_blk(buddy, level);
-        blk->size = _block_size_at_level(--level);
+        blk->size = block_sizes[--level];
     }
 }
+
 
 void debug_free_lists() {
     block *current;
     for (int i = 0; i < MAX_LVLS; i++) {
-        printf("LEVEL: %d (%d) HEAD: (%p)\n", i, _block_size_at_level(i), free_lists[i]);
+        printf("LEVEL: %d (%d) HEAD: (%p) ", i, block_sizes[i], free_lists[i]);
+        current = free_lists[i];
+        while (current) {
+            current = current->next;
+            printf("(%p) ", current);
+        }
+        printf("\n");
     }
     printf("\n");
 }
 
+
 int main() {
-    _init_memory();
+    _init_allocator();
     void *blk1, *blk2, *blk3, *blk4, *blk5, *blk6;
-    block *blk_test;
-    blk1 = alloc(128);
+    blk1 = alloc(16);
     debug_free_lists();
     free_blk(blk1);
     debug_free_lists();
